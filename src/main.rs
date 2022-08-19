@@ -1,7 +1,6 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use time::OffsetDateTime;
 use zbus::{blocking::Connection, dbus_proxy};
 
 #[dbus_proxy(
@@ -23,13 +22,13 @@ fn main() -> color_eyre::eyre::Result<()> {
     let proxy = SensorsProxyBlocking::new(&conn)?;
 
     loop {
-        let now = OffsetDateTime::now_local()?;
-
         proxy.claim_light()?;
         let level = proxy.light_level()?;
 
-        println!("{now} {level}");
+        let now = chrono::Local::now();
 
-        sleep(Duration::new(60, 0));
+        println!("{},{:04} lux", now.time(), level.floor() as u64);
+
+        sleep(Duration::new(30, 0));
     }
 }
