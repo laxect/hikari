@@ -1,0 +1,10 @@
+[Unit]
+Description=Hikari Brightness Daemon
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+Restart=always
+Environment="RUST_LOG=error"
+ExecStart=##PREFIX##/hikari
+RestartSec=5s
