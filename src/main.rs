@@ -71,6 +71,8 @@ fn moniter_lux(hadess: &SensorsProxyBlocking) -> eyre::Result<()> {
 fn set_brightness(login1: &Login1ProxyBlocking) -> eyre::Result<()> {
     let mut now: Option<u32> = Option::None;
     loop {
+        sleep(Duration::new(0, 50_000_000));
+
         let target = TARGET.load(Ordering::Acquire);
         let new = if let Some(now) = now {
             if now > target {
@@ -89,8 +91,6 @@ fn set_brightness(login1: &Login1ProxyBlocking) -> eyre::Result<()> {
         };
         login1.set_brightness("backlight", "intel_backlight", new)?;
         now = Some(new);
-
-        sleep(Duration::new(0, 50_000_000));
     }
 }
 
