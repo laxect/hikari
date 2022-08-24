@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::thread::{self, sleep};
-use std::time::Duration;
+use std::thread;
+use std::time::{self, Duration};
 
 use color_eyre::eyre;
 use tracing::{error, info};
@@ -22,6 +22,7 @@ const MIN_LUX: f64 = 400.0;
 
 static TARGET: AtomicU32 = AtomicU32::new(0);
 
+/// compute brightness by environment light level.
 fn lux_to_brightness(lux: f64) -> u32 {
     if lux > MAX_LUX {
         return MAX as u32;
@@ -55,8 +56,20 @@ trait Sensors {
     fn light_level(&self) -> zbus::Result<f64>;
 }
 
+/// Get light level from iio proxy (hadess).
 fn moniter_lux(hadess: &SensorsProxyBlocking) -> eyre::Result<()> {
+    let mut now = time::Instant::now();
+
     loop {
+        // check if The System has been suspend since last run, by
+        // simply check the time elapsed.
+        let dur = now.elapsed();
+        if dur > Duration::new(20, 0) {
+            info!("time warp found.");
+            thread::sleep(Duration::new(20, 0));
+        }
+        now = time::Instant::now();
+
         hadess.claim_light()?;
         let level = hadess.light_level()?;
 
@@ -64,14 +77,16 @@ fn moniter_lux(hadess: &SensorsProxyBlocking) -> eyre::Result<()> {
         info!("{},{:04} lux", now.time(), level.floor() as u64);
 
         TARGET.store(lux_to_brightness(level), Ordering::Release);
-        sleep(Duration::new(5, 0));
+
+        thread::sleep(Duration::new(5, 0));
     }
 }
 
+/// Use the freedesktop api to set brightness.
 fn set_brightness(login1: &Login1ProxyBlocking) -> eyre::Result<()> {
     let mut now: Option<u32> = Option::None;
     loop {
-        sleep(Duration::new(0, 50_000_000));
+        thread::sleep(Duration::new(0, 50_000_000));
 
         let target = TARGET.load(Ordering::Acquire);
         let new = if let Some(now) = now {
@@ -98,6 +113,7 @@ fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt::init();
 
+    // zbus connection is send+sync, so we just use one in two thread.
     let conn = Connection::system()?;
     let hadess = SensorsProxyBlocking::new(&conn)?;
     let login1 = Login1ProxyBlocking::new(&conn)?;
@@ -109,13 +125,13 @@ fn main() -> eyre::Result<()> {
     let moniter_t = thread::spawn(move || loop {
         if let Err(e) = moniter_lux(&hadess) {
             error!("Moniter: {}", e);
-            sleep(Duration::new(10, 0));
+            thread::sleep(Duration::new(10, 0));
         }
     });
     let update_t = thread::spawn(move || loop {
         if let Err(e) = set_brightness(&login1) {
             error!("Login1: {}", e);
-            sleep(Duration::new(10, 0));
+            thread::sleep(Duration::new(10, 0));
         }
     });
 
