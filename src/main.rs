@@ -61,24 +61,25 @@ fn moniter_lux(hadess: &SensorsProxyBlocking) -> eyre::Result<()> {
     let mut now = time::Instant::now();
 
     loop {
+        hadess.claim_light()?;
+        thread::sleep(Duration::from_secs(2));
         // check if The System has been suspend since last run, by
         // simply check the time elapsed.
         let dur = now.elapsed();
-        if dur > Duration::new(20, 0) {
+        if dur > Duration::from_secs(20) {
             info!("time warp found.");
-            thread::sleep(Duration::new(20, 0));
+            thread::sleep(Duration::from_secs(20));
         }
-        now = time::Instant::now();
 
-        hadess.claim_light()?;
         let level = hadess.light_level()?;
 
-        let now = chrono::Local::now();
-        info!("{},{:04} lux", now.time(), level.floor() as u64);
+        let ima = chrono::Local::now();
+        info!("{},{:04} lux", ima.time(), level.floor() as u64);
 
         TARGET.store(lux_to_brightness(level), Ordering::Release);
 
-        thread::sleep(Duration::new(5, 0));
+        now = time::Instant::now();
+        thread::sleep(Duration::from_secs(5));
     }
 }
 
@@ -86,7 +87,7 @@ fn moniter_lux(hadess: &SensorsProxyBlocking) -> eyre::Result<()> {
 fn set_brightness(login1: &Login1ProxyBlocking) -> eyre::Result<()> {
     let mut now: Option<u32> = Option::None;
     loop {
-        thread::sleep(Duration::new(0, 50_000_000));
+        thread::sleep(Duration::from_nanos(50_000_000));
 
         let target = TARGET.load(Ordering::Acquire);
         let new = if let Some(now) = now {
@@ -125,13 +126,13 @@ fn main() -> eyre::Result<()> {
     let moniter_t = thread::spawn(move || loop {
         if let Err(e) = moniter_lux(&hadess) {
             error!("Moniter: {}", e);
-            thread::sleep(Duration::new(10, 0));
+            thread::sleep(Duration::from_secs(10));
         }
     });
     let update_t = thread::spawn(move || loop {
         if let Err(e) = set_brightness(&login1) {
             error!("Login1: {}", e);
-            thread::sleep(Duration::new(10, 0));
+            thread::sleep(Duration::from_secs(10));
         }
     });
 
