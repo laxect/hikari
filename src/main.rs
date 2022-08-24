@@ -138,8 +138,9 @@ fn main() -> eyre::Result<()> {
         let s = s.clone();
         if let Err(e) = moniter_lux(s) {
             error!("Moniter: {}", e);
-            thread::sleep(Duration::from_secs(10));
         }
+        info!("next round!");
+        thread::sleep(Duration::from_secs(10));
     });
     let update_t = thread::spawn(move || set_brightness(r));
 
