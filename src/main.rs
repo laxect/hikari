@@ -1,9 +1,9 @@
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::thread;
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::{self, Duration};
+use std::{sync, thread};
 
 use color_eyre::eyre;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use zbus::{blocking::Connection, dbus_proxy};
 
 /// # brightness
@@ -19,8 +19,6 @@ const MIN: f64 = 1125.0;
 const MAX_LUX: f64 = 2500.0;
 /// Night
 const MIN_LUX: f64 = 400.0;
-
-static TARGET: AtomicU32 = AtomicU32::new(0);
 
 /// compute brightness by environment light level.
 fn lux_to_brightness(lux: f64) -> u32 {
@@ -57,39 +55,54 @@ trait Sensors {
 }
 
 /// Get light level from iio proxy (hadess).
-fn moniter_lux(hadess: &SensorsProxyBlocking) -> eyre::Result<()> {
-    let mut now = time::Instant::now();
+fn moniter_lux(s: Sender<u32>) -> eyre::Result<()> {
+    let connection = Connection::system()?;
+    let hadess = SensorsProxyBlocking::new(&connection)?;
 
+    thread::sleep(Duration::from_secs(2));
+
+    let mut now = time::SystemTime::now();
     loop {
-        hadess.claim_light()?;
-        thread::sleep(Duration::from_secs(2));
         // check if The System has been suspend since last run, by
         // simply check the time elapsed.
-        let dur = now.elapsed();
+        let dur = now.elapsed()?;
+        debug!("time pass {:#?}", dur);
         if dur > Duration::from_secs(20) {
-            info!("time warp found.");
-            thread::sleep(Duration::from_secs(20));
+            info!("time warp detected.");
+            return Ok(());
         }
 
+        // there is, still chance, things will broken.
+        // but I think the defence of now is enough.
+        hadess.claim_light()?;
         let level = hadess.light_level()?;
 
         let ima = chrono::Local::now();
-        info!("{},{:04} lux", ima.time(), level.floor() as u64);
+        debug!("{},{:04} lux", ima.time(), level.floor() as u64);
 
-        TARGET.store(lux_to_brightness(level), Ordering::Release);
+        s.send(lux_to_brightness(level))?;
 
-        now = time::Instant::now();
+        now = time::SystemTime::now();
+        debug!("now is {:?}", now);
         thread::sleep(Duration::from_secs(5));
     }
 }
 
 /// Use the freedesktop api to set brightness.
-fn set_brightness(login1: &Login1ProxyBlocking) -> eyre::Result<()> {
+fn set_brightness(r: Receiver<u32>) -> eyre::Result<()> {
+    let connection = Connection::system()?;
+    let login1 = Login1ProxyBlocking::new(&connection)?;
+
     let mut now: Option<u32> = Option::None;
+    let mut target = r.recv()?;
     loop {
         thread::sleep(Duration::from_nanos(50_000_000));
 
-        let target = TARGET.load(Ordering::Acquire);
+        if let Ok(new_target) = r.try_recv() {
+            debug!("update target: {}", new_target);
+            target = new_target;
+        }
+
         let new = if let Some(now) = now {
             if now > target {
                 if (now - target) < 10 {
@@ -105,7 +118,12 @@ fn set_brightness(login1: &Login1ProxyBlocking) -> eyre::Result<()> {
         } else {
             target
         };
-        login1.set_brightness("backlight", "intel_backlight", new)?;
+
+        // absolute value. no need to fix.
+        login1
+            .set_brightness("backlight", "intel_backlight", new)
+            .map_err(|e| error!("Login1: {}", e))
+            .ok();
         now = Some(new);
     }
 }
@@ -114,29 +132,17 @@ fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt::init();
 
-    // zbus connection is send+sync, so we just use one in two thread.
-    let conn = Connection::system()?;
-    let hadess = SensorsProxyBlocking::new(&conn)?;
-    let login1 = Login1ProxyBlocking::new(&conn)?;
+    let (s, r) = sync::mpsc::channel::<u32>();
 
-    // set up
-    hadess.claim_light()?;
-    TARGET.store(lux_to_brightness(hadess.light_level()?), Ordering::Release);
-
-    let moniter_t = thread::spawn(move || loop {
-        if let Err(e) = moniter_lux(&hadess) {
+    let _moniter_t = thread::spawn(move || loop {
+        let s = s.clone();
+        if let Err(e) = moniter_lux(s) {
             error!("Moniter: {}", e);
             thread::sleep(Duration::from_secs(10));
         }
     });
-    let update_t = thread::spawn(move || loop {
-        if let Err(e) = set_brightness(&login1) {
-            error!("Login1: {}", e);
-            thread::sleep(Duration::from_secs(10));
-        }
-    });
+    let update_t = thread::spawn(move || set_brightness(r));
 
-    moniter_t.join().unwrap();
-    update_t.join().unwrap();
+    update_t.join().unwrap().unwrap();
     Ok(())
 }
