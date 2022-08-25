@@ -59,13 +59,11 @@ fn moniter_lux(s: Sender<u32>) -> eyre::Result<()> {
     let connection = Connection::system()?;
     let hadess = SensorsProxyBlocking::new(&connection)?;
 
-    thread::sleep(Duration::from_secs(2));
-
     let mut now = time::SystemTime::now();
     loop {
         // check if The System has been suspend since last run, by
         // simply check the time elapsed.
-        let dur = now.elapsed()?;
+        let dur = now.elapsed().unwrap_or_default();
         debug!("time pass {:#?}", dur);
         if dur > Duration::from_secs(20) {
             info!("time warp detected.");
@@ -104,15 +102,12 @@ fn set_brightness(r: Receiver<u32>) -> eyre::Result<()> {
         }
 
         let new = if let Some(now) = now {
+            if now.abs_diff(target) < 10 {
+                continue;
+            }
             if now > target {
-                if (now - target) < 10 {
-                    continue;
-                }
                 now - 10
             } else {
-                if (target - now) < 10 {
-                    continue;
-                }
                 now + 10
             }
         } else {
