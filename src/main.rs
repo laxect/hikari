@@ -59,6 +59,11 @@ fn moniter_lux(s: Sender<u32>) -> eyre::Result<()> {
     let connection = Connection::system()?;
     let hadess = SensorsProxyBlocking::new(&connection)?;
 
+    // the first claim
+    hadess.claim_light()?;
+    info!("first claim");
+    thread::sleep(Duration::from_secs(5));
+
     let mut now = time::SystemTime::now();
     loop {
         // check if The System has been suspend since last run, by
@@ -71,7 +76,7 @@ fn moniter_lux(s: Sender<u32>) -> eyre::Result<()> {
         }
 
         // there is, still chance, things will broken.
-        // but I think the defence of now is enough.
+        // but I think the defence is enough.
         hadess.claim_light()?;
         let level = hadess.light_level()?;
 
@@ -134,8 +139,8 @@ fn main() -> eyre::Result<()> {
         if let Err(e) = moniter_lux(s) {
             error!("Moniter: {}", e);
         }
-        info!("next round!");
         thread::sleep(Duration::from_secs(10));
+        info!("next round!");
     });
     let update_t = thread::spawn(move || set_brightness(r));
 
